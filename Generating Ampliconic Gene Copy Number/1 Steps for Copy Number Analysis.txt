@@ -1,0 +1,38 @@
+Step 1: Download GTEx whole genome sequencing datasets in BAM format from dbGAP.
+
+	Downloaded ONLY THE Y CHROMOSOME ALIGNMENTS for each GTEx sample. List of sample ids used is available in the supplementary file.
+
+Step 2: Extract Y chromosome specific reads and process them.
+
+	samtools view -hb -f 3 -F 12 SAMPLE_NAME.bam > Parsed_Ychr_pairedReads.bam
+	samtools sort -n Parsed_Ychr_pairedReads.bam > Parsed_Ychr_pairedReads_sotredbyPOS.bam
+	bamToFastq -i Parsed_Ychr_pairedReads_sotredbyPOS.bam -fq SAMPLE_NAME_1.fastq -fq2 SAMPLE_NAME_2.fastq
+
+Step 3: Process the reads by aligning them to hg38 version of the human reference genome.
+
+	sh GTEx_pipeline.sh BWA <SAMPLE_NAME> <GTEX-ID>
+	Note: 1) Fastq files should be named as follows : <SAMPLE_NAME>_1.fastq #FORWARD STRAND
+												   <SAMPLE_NAME>_2.fastq #REVERSE STRAND
+		  2) The reference genome can be downloaded from UCSC genome browser.
+				wget http://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+		  3) The pipline uses BWA-MEM, generate BWA index before running the pipeline.
+				bwa index -a bwtsw <reference.fasta>
+				The reference and index must be in the same folder. Set the path to the folder in GTEx_pipeline.sh
+		  4) Update the path in GTEx_pipeline.sh
+				BWA, samtools, PICARD and temp folder to save intermediate files. 
+
+Step 4: Run AmpliCoNE on the resulting BAM file.
+
+	python AmpliCoNE.py --BAM SAMPLE_NAME_sorted_RMDup.bam --CHR Y --GD <Gene_definition.tab> --AN <hg38_Ychr_annotation.tab>
+	Note: The gene definition file and annotation file can be downloaded from links provided in AmpliCoNE github repository.
+
+Step 5: Parse the output files for 170 samples and create a summary table.
+
+	python GTEX_WGS_parse_outputfiles.py  #(Same step is run to generate summary of Y haplogroup. Run it only once when both AmpliCoNE and Yhaplo output for all samples are generated.)
+	Rscript GTEX_WGS_summary_AmpliconCN.R
+	Note: Set the paths within the code before running. Yhap should be run and the output of AmpliCoNE and Yhaplo must be in same subfolders for each sample.
+
+You get two files GTEx_CopyNumber_Amplicon.txt and GTEx_CopyNumber_XDG.txt which are used in the analysis. The rows are gene families/genes and columns are samples.
+
+
+Additionally, provided code to generate symlink for genomic data and slurm jobs to run AmpliCoNE and Yhaplo automatically. Example slurm job is also provided under copy number folder. 

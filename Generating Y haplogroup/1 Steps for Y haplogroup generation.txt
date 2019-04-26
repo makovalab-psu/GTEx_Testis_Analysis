@@ -1,0 +1,33 @@
+Step 1: Download GTEx datasets in BAM format from dbGAP.
+
+	Downloaded ONLY THE Y CHROMOSOME ALIGNMENTS for each GTEx sample. List of sample ids used is available in the supplementary file. 
+
+Step 2: Generate pileup of the Y chromosome to extract the nucleotides at locations Yhaplo uses to predict the haplogroup. (Yhaplo works only on hg19 reference)
+
+Download GTEx specific reference.
+	wget https://storage.googleapis.com/gtex_analysis_v7/reference/Homo_sapiens_assembly19.fasta.gz
+
+Run mpileup using the downloaded reference.
+	samtools mpileup -f Homo_sapiens_assembly19.fasta SAMPLE_NAME.bam -r "Y:2655100-28771000" > SAMPLE_NAME_hg19_chrY_2655100_28771000.pileup
+
+
+Step 3: Generate Yhaplo input file using the pileup output for each BAM file. The python code makes use of example dataset provided by Yhaplo (1000Y.subset.genos.txt) to generate a similar file with SNPs from the sample BAM. 
+
+	python make_input.py SAMPLE_NAME_hg19_chrY_2655100_28771000.pileup SAMPLE_NAME_hg19.genos.txt
+	Note: Set path of 1000Y.subset.genos.txt to "Test_input"  by downloading the file (wget https://github.com/23andMe/yhaplo/blob/master/data/1000Y.subset.genos.txt) or use it from your Yhaplo installation (/galaxy/home/rxv923/src/yhaplo/data/1000Y.subset.genos.txt)
+
+
+Step 4: Run Yhaplo
+	
+	python /galaxy/home/rxv923/src/yhaplo/callHaplogroups.py -i SAMPLE_NAME_hg19.genos.txt
+
+
+Step 5: Parse the output files for 170 samples and create a summary table.
+
+	python GTEX_WGS_parse_outputfiles.py (Same step is run to generate summary of copy number data. Run it only once when both AmpliCoNE and Yhaplo output for all samples are generated.)
+	Note: Set the paths within the code before running. Yhap should be run and the output of AmpliCoNE and Yhaplo must be in same subfolders for each sample.
+
+
+You get a file GTEX_Yhaplogroups_YchrBAM.tab which is used in the downstream analysis. The rows are samples with haplogroup information parsed from output/haplogroups.SAMPLE_NAME_hg19.txt.
+
+Additionally, provided code to generate symlink for genomic data and slurm jobs to run AmpliCoNE and Yhaplo automatically. Example slurm job is also provided under copy number folder. 

@@ -1,0 +1,197 @@
+Step 1: Download GTEx Testis RNAseq datasets in FASTQ format from dbGAP.
+
+	Downloaded RNASeq data in FASTQ format. List of sample ids used is available in the supplementary file.
+
+Step 2: Run kallisto to obtain transcript level read count.
+
+	Download refseq database:
+	wget http://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/refFlat.txt.gz
+	wget  http://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/refMrna.fa.gz
+
+	gunzip refFlat.txt.gz 
+	gunzip refMrna.fa.gz 
+	
+	Generate transcript to gene definition file:
+	genePredToGtf hg38 refFlat hg38_refFlat_10252016.gtf
+	
+	Generate Kallisto index:
+	kallisto_linux-v0.43.0/kallisto index --index=refMrna_kallisto_index refMrna.fa
+	
+
+	Run Kallisto on each sample:
+	kallisto_linux-v0.43.0/kallisto quant --index=refMrna_kallisto_index --output-dir=kallisto_GTEXID --threads=4 --bootstrap-samples=100 --seed=9 --bias SRRID_1.fastq.gz SRRID_2.fastq.gz
+
+Step 3: Move Kallisto output-dir into one folder so that tximport can load all the files into one big matrix
+
+	#use find to identify all the output folders and move them to a folder called Kallisto_Results.
+	find . -name "kallisto_*" -exec mv -t Kallisto_Results/ {} +
+
+	
+Step 4: Transcript level read counts to gene level summary using tximport package
+
+	In R:
+	library(tximport)
+	
+
+	#load the transcript to gene definition file
+	tar2gen<-read.table("hg38_refFlat_10252016_GenetoID.txt", header=F, sep="\t", stringsAsFactors=F)
+	names(tar2gen)=c("target_id","gene")
+	
+	#A folder with all 170 samples kallisto output directory
+	base_dir <- "/nfs/secure/scratch6/nekrut_gtex/rxv923/GTEX/TESTIS/RNASeq/results/Kallisto_Results"
+	samples<-list.dirs(base_dir,recursive = FALSE,full.names=FALSE)
+	
+	#list of paths directing to the kallisto output file for each sample. 
+	kal_dirs <- sapply(samples, function(id) file.path(base_dir, id,"abundance.tsv"))
+	
+	#Using tximport to read kallisto output files and summarizing to gene level.
+	gene_level=tximport(kal_dirs, type = "kallisto",countsFromAbundance = "no", tx2gene = tar2gen, reader = read.delim, geneIdCol="gene",txIdCol="target_id" )
+
+	#Obtaining the gene level counts  from tximport object.
+	gtexData=gene_level$counts
+	gtexData<-as.matrix(gtexData)
+	#Rounding the read counts
+	gtexData=apply(gtexData, 1:2, round)
+	head(gtexData)
+	
+Step 5: Normalization to compare expression across gene families
+
+	In R:
+	library("DESeq2")
+	
+	#DESeq2 steps to set the design of the data. No replicates and all are paired end datasets 
+	condition <- colnames(gtexData)
+	type <- rep("paired-end",length(condition))
+
+	colData=data.frame(cbind(condition,type),stringsAsFactors = FALSE)
+	row.names(colData)=colnames(gtexData)
+	head(colData)
+
+	#Normalization step
+	dds <- DESeqDataSetFromMatrix(countData = gtexData, colData = colData, design = ~ condition)
+	dds <- DESeq(dds)
+	
+	#Normalized read counts
+	d<-counts(dds, normalized=TRUE)
+
+	
+Step 6: Remove outliers
+
+	In R:
+	#varianceStabilizingTransformation
+	vsd <- varianceStabilizingTransformation(dds, blind=TRUE)
+	v<-assay(vsd)
+ 
+	#PCA analysis to identify outliers
+	pca_v<-prcomp(t(log(v)))
+	plot(pca_v, type = "l")
+	sampleID<-substr(colnames(d),10,15)
+
+	#Supplementary Figure
+	pdf("PCA_Testis_GE_allSamples_plot.pdf")
+	plot(pca_v$x[,1:2], type = "p",lwd=4, main= "PCA of testis samples normalized gene expression")
+	#text(pca_v$x[,1:2], labels = sampleID, pos = 4)
+	dev.off()
+
+
+
+
+
+
+	
+	plot(pca_v$x[,1:2], type = "p",lwd=4, col=color_groupsYwg,main= "PCA of testis samples normalized gene expression")
+	text(pca_v$x[,1:2], labels = sampleID, pos = 4)
+	legend("topleft", legend=unique(twgs), col=col_hYwg, pch=19, cex=0.8)
+
+	#http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+	#Generate Heat map of the count matrix
+	library("pheatmap")
+	library("RColorBrewer")
+	#TEST 1
+	#Select the top 1000 genes based on mean values of the row
+	select <- order(rowMeans(v),decreasing=TRUE)[1:1000]
+
+	#Plot a heatmap of the top 1000 genes 
+	pdf("Heatmap_Testis_top1000_GE_allSamples_plot.pdf")
+	pheatmap(v[select,], cluster_rows=FALSE, show_rownames=FALSE, cluster_cols=TRUE)
+	dev.off()
+
+	#TEST 2  
+	#apply the dist function to the transpose of the transformed count matrix to get sample-to-sample distances.
+	sampleDists <- dist(t(v))
+	sampleDistMatrix <- as.matrix(sampleDists)
+	rownames(sampleDistMatrix) <- sampleID
+	colnames(sampleDistMatrix) <- NULL
+	colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+	pdf("Heatmap_Testis_bwsample_distance_GE_allSamples_plot.pdf")
+	pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors,show_rownames=FALSE)
+	dev.off()
+
+Outlier samples:
+	outliers_samples<-c("kallisto_117YX","kallisto_1192W","kallisto_11DXY","kallisto_11UD2","kallisto_12BJ1","kallisto_131XF","kallisto_13G51","kallisto_13OW8","kallisto_13QJ3","kallisto_145MF","kallisto_NPJ8", "kallisto_P4PQ","kallisto_PLZ6","kallisto_QDVN","kallisto_S4Z8","kallisto_SIU7","kallisto_WY7C","kallisto_X4XX","kallisto_ZLFU","kallisto_ZY6K","kallisto_ZDTT")
+	outliers<-match(outliers_samples,colnames(v))
+	
+	#Check after filtering
+	v_o<-v[,-(outliers)]
+	sampleID_o<-substr(colnames(v_o),10,15)
+	pca_vo<-prcomp(t(log(v_o)))
+	plot(pca_vo, type = "l")
+	pdf("PCA_Testis_GE_Filtered_plot.pdf")
+	plot(pca_vo$x[,1:2], type = "p",lwd=4, main= "PCA of testis samples normalized gene expression")
+	text(pca_vo$x[,1:2], labels = sampleID, pos = 4)
+	dev.off()
+
+Step 7 : Summary of normalized Ampliconic gene expression values.
+
+	In R:
+	#list of outlier samples kallisto output directory names which are the colnames in "d"
+	outliers_samples<-c("kallisto_117YX","kallisto_1192W","kallisto_11DXY","kallisto_11UD2","kallisto_12BJ1","kallisto_131XF","kallisto_13G51","kallisto_13OW8","kallisto_13QJ3","kallisto_145MF","kallisto_NPJ8", "kallisto_P4PQ","kallisto_PLZ6","kallisto_QDVN","kallisto_S4Z8","kallisto_SIU7","kallisto_WY7C","kallisto_X4XX","kallisto_ZLFU","kallisto_ZY6K","kallisto_ZDTT")
+	outliers<-match(outliers_samples,colnames(v))
+	
+	#removing outliers
+	d_final<-d[,-(outliers)]
+	
+	#List of X-degenerate genes 
+	genelist=c("SRY","AMELY","DDX3Y","EIF1AY","NLGN4Y","PRKY","KDM5D","TBL1Y","TMSB4Y","USP9Y","UTY","ZFY")
+
+	#list of ampliconic genes
+	ampliconList=c("BPY2B","BPY2","BPY2C","CDY1","CDY1B","CDY2A","CDY2B","DAZ1","DAZ2","DAZ3","DAZ4","HSFY1","HSFY2","PRY","PRY2","RBMY1A1","RBMY1J","RBMY1F","RBMY1E","RBMY1D","RBMY1B","TSPY10","TSPY1","TSPY3","TSPY8","TSPY4","TSPY2","VCY","VCY1B","XKRY","XKRY2")
+
+	xdg=NULL
+	for (gene in genelist){
+		print(gene)
+		xdg=rbind(xdg,d_final[which(row.names(d_final)==gene),])
+	}
+	xdg_normD=cbind(genelist,xdg) #Matrix of X-degenerate gene expression
+
+
+	amp=NULL
+	for (gene in ampliconList){
+		print(gene)
+		amp=rbind(amp,d_final[which(row.names(d_final)==gene),])
+	}
+	amp_normD=cbind(ampliconList,amp) #Matrix of Ampliconic gene expression
+
+	#Family level expression. Summing expression of all genes within a family
+	Amplicon_summary=rbind(
+	  BPY=apply(amp[1:3,],2,sum),
+	  CDY=apply(amp[4:7,],2,sum),
+	  DAZ=apply(amp[8:11,],2,sum),
+	  HSFY=apply(amp[12:13,],2,sum),
+	  PRY=apply(amp[14:15,],2,sum),
+	  RBMY=apply(amp[16:21,],2,sum),
+	  TSPY=apply(amp[22:27,],2,sum),
+	  VCY=apply(amp[28:29,],2,sum),
+	  XKRY=apply(amp[30:31,],2,sum)
+	)
+
+	write.table(xdg_normD,file="GTEx_normalized_DESeq2_XDG.txt", sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE)
+	write.table(Amplicon_summary,file="GTEx_normalized_DESeq2_Amp.txt", sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE)
+	
+	save(dds,d,v, file = "DESeq_gtex_normalized.RData")
+	write.table(d,file="GTEx_Counts_Testis_170samples.tab", sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE)
+	
+The GTEx_normalized_DESeq2_Amp.txt and DESeq_gtex_normalized.RData is used for downstream analysis
